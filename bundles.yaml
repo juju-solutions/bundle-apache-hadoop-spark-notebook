@@ -36,19 +36,9 @@ apache-hadoop-spark-notebook:
       annotations: 
         "gui-x": "350.5031423205494"
         "gui-y": "590.3279260682181"
-    client: 
-      charm: "cs:~bigdata-dev/trusty/apache-hadoop-client"
-      num_units: 1
-      annotations: 
-        "gui-x": "731.739707497893"
-        "gui-y": "326.13777188040206"
   relations: 
-    - - "client:namenode"
-      - "hdfs-master:namenode"
     - - "spark:spark"
       - "notebook:spark"
-    - - "client:resourcemanager"
-      - "yarn-master:resourcemanager"
     - - "compute-slave:datanode"
       - "hdfs-master:datanode"
     - - "hadoop-plugin:namenode"
