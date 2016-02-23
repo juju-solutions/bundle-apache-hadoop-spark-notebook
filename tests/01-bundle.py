@@ -1,61 +1,32 @@
 #!/usr/bin/env python3
 
 import os
-import time
 import unittest
 
 import yaml
 import amulet
 
 
-class Base(object):
-    """
-    Base class for tests for Apache Hadoop Bundle.
-    """
+class TestBundle(unittest.TestCase):
     bundle_file = os.path.join(os.path.dirname(__file__), '..', 'bundle.yaml')
-    profile_name = None
 
     @classmethod
-    def deploy(cls):
-        # classmethod inheritance doesn't work quite right with
-        # setUpClass / tearDownClass, so subclasses have to manually call this
+    def setUpClass(cls):
         cls.d = amulet.Deployment(series='trusty')
         with open(cls.bundle_file) as f:
             bun = f.read()
-        profiles = yaml.safe_load(bun)
-        # amulet always selects the first profile, so we have to fudge it here
-        profile = {cls.profile_name: profiles[cls.profile_name]}
-        cls.d.load(profile)
-        cls.d.setup(timeout=9000)
-        cls.d.sentry.wait()
-        cls.hdfs = cls.d.sentry.unit['hdfs-master/0']
-        cls.yarn = cls.d.sentry.unit['yarn-master/0']
-        cls.slave = cls.d.sentry.unit['compute-slave/0']
-        cls.secondary = cls.d.sentry.unit['secondary-namenode/0']
-        cls.plugin = cls.d.sentry.unit['plugin/0']
-        cls.client = cls.d.sentry.unit['client/0']
+        bundle = yaml.safe_load(bun)
+        cls.d.load(bundle)
+        cls.d.setup(timeout=1800)
+        cls.d.sentry.wait_for_messages({'notebook': 'Ready'}, timeout=1800)
+        cls.hdfs = cls.d.sentry['hdfs-master'][0]
+        cls.yarn = cls.d.sentry['yarn-master'][0]
+        cls.slave = cls.d.sentry['compute-slave'][0]
+        cls.secondary = cls.d.sentry['secondary-namenode'][0]
+        cls.spark = cls.d.sentry['spark'][0]
+        cls.notebook = cls.d.sentry['notebook'][0]
 
-    @classmethod
-    def reset_env(cls):
-        # classmethod inheritance doesn't work quite right with
-        # setUpClass / tearDownClass, so subclasses have to manually call this
-        juju_env = amulet.helpers.default_environment()
-        services = ['hdfs-master', 'yarn-master', 'compute-slave', 'secondary-namenode', 'plugin', 'client']
-
-        def check_env_clear():
-            state = amulet.waiter.state(juju_env=juju_env)
-            for service in services:
-                if state.get(service, {}) != {}:
-                    return False
-            return True
-
-        for service in services:
-            cls.d.remove(service)
-        with amulet.helpers.timeout(300):
-            while not check_env_clear():
-                time.sleep(5)
-
-    def test_hadoop_components(self):
+    def test_components(self):
         """
         Confirm that all of the required components are up and running.
         """
@@ -63,17 +34,48 @@ class Base(object):
         yarn, retcode = self.yarn.run("pgrep -a java")
         slave, retcode = self.slave.run("pgrep -a java")
         secondary, retcode = self.secondary.run("pgrep -a java")
-        client, retcode = self.client.run("pgrep -a java")
+        spark, retcode = self.spark.run("pgrep -a java")
+        notebook, retcode = self.spark.run("pgrep -a python")
 
         # .NameNode needs the . to differentiate it from SecondaryNameNode
         assert '.NameNode' in hdfs, "NameNode not started"
-        assert 'ResourceManager' in yarn, "ResourceManager not started"
-        assert 'JobHistoryServer' in yarn, "JobHistoryServer not started"
-        assert 'NodeManager' in slave, "NodeManager not started"
-        assert 'DataNode' in slave, "DataServer not started"
-        assert 'SecondaryNameNode' in secondary, "SecondaryNameNode not started"
+        assert '.NameNode' not in yarn, "NameNode should not be running on yarn-master"
+        assert '.NameNode' not in slave, "NameNode should not be running on compute-slave"
+        assert '.NameNode' not in secondary, "NameNode should not be running on secondary-namenode"
+        assert '.NameNode' not in spark, "NameNode should not be running on spark"
 
-        return hdfs, yarn, slave, secondary, client  # allow subclasses to do additional checks
+        assert 'ResourceManager' in yarn, "ResourceManager not started"
+        assert 'ResourceManager' not in hdfs, "ResourceManager should not be running on hdfs-master"
+        assert 'ResourceManager' not in slave, "ResourceManager should not be running on compute-slave"
+        assert 'ResourceManager' not in secondary, "ResourceManager should not be running on secondary-namenode"
+        assert 'ResourceManager' not in spark, "ResourceManager should not be running on spark"
+
+        assert 'JobHistoryServer' in yarn, "JobHistoryServer not started"
+        assert 'JobHistoryServer' not in hdfs, "JobHistoryServer should not be running on hdfs-master"
+        assert 'JobHistoryServer' not in slave, "JobHistoryServer should not be running on compute-slave"
+        assert 'JobHistoryServer' not in secondary, "JobHistoryServer should not be running on secondary-namenode"
+        assert 'JobHistoryServer' not in spark, "JobHistoryServer should not be running on spark"
+
+        assert 'NodeManager' in slave, "NodeManager not started"
+        assert 'NodeManager' not in yarn, "NodeManager should not be running on yarn-master"
+        assert 'NodeManager' not in hdfs, "NodeManager should not be running on hdfs-master"
+        assert 'NodeManager' not in secondary, "NodeManager should not be running on secondary-namenode"
+        assert 'NodeManager' not in spark, "NodeManager should not be running on spark"
+
+        assert 'DataNode' in slave, "DataServer not started"
+        assert 'DataNode' not in yarn, "DataNode should not be running on yarn-master"
+        assert 'DataNode' not in hdfs, "DataNode should not be running on hdfs-master"
+        assert 'DataNode' not in secondary, "DataNode should not be running on secondary-namenode"
+        assert 'DataNode' not in spark, "DataNode should not be running on spark"
+
+        assert 'SecondaryNameNode' in secondary, "SecondaryNameNode not started"
+        assert 'SecondaryNameNode' not in yarn, "SecondaryNameNode should not be running on yarn-master"
+        assert 'SecondaryNameNode' not in hdfs, "SecondaryNameNode should not be running on hdfs-master"
+        assert 'SecondaryNameNode' not in slave, "SecondaryNameNode should not be running on compute-slave"
+        assert 'SecondaryNameNode' not in spark, "SecondaryNameNode should not be running on spark"
+
+        assert 'spark' in spark, 'Spark should be running on spark'
+        assert 'notebook' in notebook, 'Notebook should be running on spark'
 
     def test_hdfs_dir(self):
         """
@@ -84,11 +86,11 @@ class Base(object):
 
         NB: These are order-dependent, so must be done as part of a single test case.
         """
-        output, retcode = self.client.run("su hdfs -c 'hdfs dfs -mkdir -p /user/ubuntu'")
+        output, retcode = self.spark.run("su hdfs -c 'hdfs dfs -mkdir -p /user/ubuntu'")
         assert retcode == 0, "Created a user directory on hdfs FAILED:\n{}".format(output)
-        output, retcode = self.client.run("su hdfs -c 'hdfs dfs -chown ubuntu:ubuntu /user/ubuntu'")
+        output, retcode = self.spark.run("su hdfs -c 'hdfs dfs -chown ubuntu:ubuntu /user/ubuntu'")
         assert retcode == 0, "Assigning an owner to hdfs directory FAILED:\n{}".format(output)
-        output, retcode = self.client.run("su hdfs -c 'hdfs dfs -chmod -R 755 /user/ubuntu'")
+        output, retcode = self.spark.run("su hdfs -c 'hdfs dfs -chmod -R 755 /user/ubuntu'")
         assert retcode == 0, "seting directory permission on hdfs FAILED:\n{}".format(output)
 
     def test_yarn_mapreduce_exe(self):
@@ -112,59 +114,15 @@ class Base(object):
             ('cleanup',      "su hdfs -c 'hdfs dfs -rm -r /user/ubuntu/teragenout'"),
         ]
         for name, step in test_steps:
-            output, retcode = self.client.run(step)
+            output, retcode = self.spark.run(step)
             assert retcode == 0, "{} FAILED:\n{}".format(name, output)
 
+    def test_spark(self):
+        output, retcode = self.spark.run("su ubuntu -c 'bash -lc /home/ubuntu/sparkpi.sh 2>&1'")
+        assert 'Pi is roughly' in output, 'SparkPI test failed: %s' % output
 
-class TestScalable(unittest.TestCase, Base):
-    profile_name = 'apache-core-batch-processing'
-
-    @classmethod
-    def setUpClass(cls):
-        cls.deploy()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.reset_env()
-
-    def test_hadoop_components(self):
-        """
-        In addition to testing that the components are running where they
-        are supposed to be, confirm that none of them are also running where
-        they shouldn't be.
-        """
-        hdfs, yarn, slave, secondary, client = super(TestScalable, self).test_hadoop_components()
-
-        # .NameNode needs the . to differentiate it from SecondaryNameNode
-        assert '.NameNode' not in yarn, "NameNode should not be running on yarn-master"
-        assert '.NameNode' not in slave, "NameNode should not be running on compute-slave"
-        assert '.NameNode' not in secondary, "NameNode should not be running on secondary-namenode"
-        assert '.NameNode' not in client, "NameNode should not be running on client"
-
-        assert 'ResourceManager' not in hdfs, "ResourceManager should not be running on hdfs-master"
-        assert 'ResourceManager' not in slave, "ResourceManager should not be running on compute-slave"
-        assert 'ResourceManager' not in secondary, "ResourceManager should not be running on secondary-namenode"
-        assert 'ResourceManager' not in client, "ResourceManager should not be running on client"
-
-        assert 'JobHistoryServer' not in hdfs, "JobHistoryServer should not be running on hdfs-master"
-        assert 'JobHistoryServer' not in slave, "JobHistoryServer should not be running on compute-slave"
-        assert 'JobHistoryServer' not in secondary, "JobHistoryServer should not be running on secondary-namenode"
-        assert 'JobHistoryServer' not in client, "JobHistoryServer should not be running on client"
-
-        assert 'NodeManager' not in yarn, "NodeManager should not be running on yarn-master"
-        assert 'NodeManager' not in hdfs, "NodeManager should not be running on hdfs-master"
-        assert 'NodeManager' not in secondary, "NodeManager should not be running on secondary-namenode"
-        assert 'NodeManager' not in client, "NodeManager should not be running on client"
-
-        assert 'DataNode' not in yarn, "DataNode should not be running on yarn-master"
-        assert 'DataNode' not in hdfs, "DataNode should not be running on hdfs-master"
-        assert 'DataNode' not in secondary, "DataNode should not be running on secondary-namenode"
-        assert 'DataNode' not in client, "DataNode should not be running on client"
-
-        assert 'SecondaryNameNode' not in yarn, "SecondaryNameNode should not be running on yarn-master"
-        assert 'SecondaryNameNode' not in hdfs, "SecondaryNameNode should not be running on hdfs-master"
-        assert 'SecondaryNameNode' not in slave, "SecondaryNameNode should not be running on compute-slave"
-        assert 'SecondaryNameNode' not in client, "SecondaryNameNode should not be running on client"
+    def test_notebook(self):
+        pass  # requires javascript; how to test?
 
 
 if __name__ == '__main__':
