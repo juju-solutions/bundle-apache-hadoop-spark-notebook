@@ -18,7 +18,7 @@ class TestBundle(unittest.TestCase):
         bundle = yaml.safe_load(bun)
         cls.d.load(bundle)
         cls.d.setup(timeout=1800)
-        cls.d.sentry.wait_for_messages({'spark': 'Ready'}, timeout=1800)
+        cls.d.sentry.wait_for_messages({'spark': 'Ready (yarn-client)'}, timeout=1800)
         cls.hdfs = cls.d.sentry['namenode'][0]
         cls.yarn = cls.d.sentry['resourcemanager'][0]
         cls.slave = cls.d.sentry['slave'][0]
